@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>室内乐队配器辅助器 · 编曲试听界面</title>
+<style>
+  :root {
+    --bg: #0f141b; --panel: #18202b; --panel2: #1f2937;
+    --line: #2c3847; --text: #e6ecf3; --muted: #93a1b2;
+    --accent: #4f9cf9; --ok: #37c27b; --warn: #f0a848; --err: #ef6a6a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { padding: 18px 26px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(120deg, #15202e, #101722); }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; }
+  .layout { display: grid; grid-template-columns: 340px 1fr; gap: 18px;
+    padding: 18px 26px; }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px; }
+  .panel h2 { font-size: 15px; margin: 0 0 12px; color: var(--accent); }
+  label { display: block; font-size: 12px; color: var(--muted);
+    margin: 10px 0 4px; }
+  select, button, input { width: 100%; background: var(--panel2);
+    color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; }
+  button { cursor: pointer; font-weight: 600; }
+  button.primary { background: var(--accent); border-color: var(--accent);
+    color: #08131f; margin-top: 14px; }
+  button.ghost { background: transparent; margin-top: 8px; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .player-card { border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px; margin-bottom: 8px; background: var(--panel2); }
+  .player-card .pid { font-weight: 700; margin-bottom: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-size: 12px; padding: 3px 8px; border-radius: 999px;
+    border: 1px solid var(--line); background: #24303f; cursor: pointer; }
+  .chip.on { background: var(--accent); color: #08131f; border-color: var(--accent); }
+  .muted { color: var(--muted); font-size: 12px; }
+  .status { padding: 10px 12px; border-radius: 8px; margin-bottom: 14px;
+    font-size: 13px; white-space: pre-wrap; }
+  .status.ok { background: rgba(55,194,123,.12); border: 1px solid var(--ok); }
+  .status.err { background: rgba(239,106,106,.12); border: 1px solid var(--err); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line);
+    vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 999px;
+    font-size: 11px; border: 1px solid var(--line); }
+  .tag.melody { color: #8fc0ff; border-color: #2f5d8f; }
+  .tag.inner { color: #b59df0; border-color: #5a4a86; }
+  .tag.bass { color: #7fd6b0; border-color: #346b53; }
+  .tag.handoff-in, .tag.split, .tag.handoff-out { color: var(--warn);
+    border-color: #7a5a2c; }
+  .tag.breath-rest { color: var(--err); border-color: #7a3737; }
+  .tag.direct { color: var(--muted); }
+  audio { width: 100%; margin: 6px 0; }
+  .timeline { position: relative; height: 26px; background: #0d131a;
+    border-radius: 6px; overflow: hidden; margin: 4px 0 10px; }
+  .block { position: absolute; top: 3px; height: 20px; border-radius: 4px;
+    background: var(--accent); opacity: .85; font-size: 10px; color: #06121f;
+    overflow: hidden; white-space: nowrap; padding: 2px 4px; }
+  .block.rest { background: var(--err); opacity: .55; }
+  details { margin-top: 12px; border-top: 1px solid var(--line);
+    padding-top: 10px; }
+  summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+  ul.scope { font-size: 12.5px; color: var(--muted); padding-left: 18px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .small { font-size: 12px; color: var(--muted); }
+  .fail { background: rgba(239,106,106,.08); border: 1px solid var(--err);
+    border-radius: 8px; padding: 10px; font-size: 12.5px; white-space: pre-wrap;
+    max-height: 320px; overflow: auto; }
+  .add-btn { width: auto; padding: 4px 12px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>室内乐队配器辅助器 · 编曲试听界面</h1>
+  <p>硬性演奏条件（真实音域 / 移调记谱 / 呼吸与恢复 / 换把 / 换奏 / 复音）优先，音色偏好仅作软目标。所有结果由约束求解器实时生成。</p>
+</header>
+<div class="layout">
+  <div>
+    <div class="panel">
+      <h2>1 · 选择材料与编制</h2>
+      <label>谱例</label>
+      <select id="example"></select>
+      <button class="ghost" id="loadExample">载入谱例</button>
+
+      <label>编制预设</label>
+      <select id="preset"></select>
+
+      <label>演奏者与可兼任乐器（点击芯片切换）</label>
+      <div id="players"></div>
+      <button class="ghost add-btn" id="addPlayer">+ 添加演奏者</button>
+
+      <button class="primary" id="run">生成配器并试听</button>
+      <p class="small" id="runHint">按钮实时调用 /api/orchestrate 约束求解，不使用固定数据。</p>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h2>模型简化范围</h2>
+      <ul class="scope" id="scope"></ul>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <h2>2 · 配器结果与混音试听</h2>
+      <div id="status" class="muted">尚未生成。选择编制后点击“生成配器并试听”。</div>
+      <div id="media"></div>
+      <div id="timelines"></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h2>3 · 声部配置（按乐器分谱）</h2>
+      <div id="parts" class="muted">结果区将呈现每件乐器承担的材料、移调记谱音高与移交/换气事件。</div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h2>4 · 可追踪分配与恢复时长检验</h2>
+      <details open>
+        <summary>分配追踪 trace</summary>
+        <div id="trace" style="max-height:340px;overflow:auto;margin-top:8px"></div>
+      </details>
+      <details>
+        <summary>每位演奏者恢复时长检验</summary>
+        <div id="recovery" style="margin-top:8px"></div>
+      </details>
+      <details>
+        <summary>无解解释 / 失败原因</summary>
+        <div id="failures" class="small" style="margin-top:8px"></div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let catalog = [], presets = {}, ensemble = [], currentScore = null;
+
+function roleTag(role) {
+  const map = {melody: "主旋律", inner: "内声部", bass: "低音"};
+  return `<span class="tag ${role}">${map[role] || role}</span>`;
+}
+function actionTag(a) { return `<span class="tag ${a}">${a}</span>`; }
+
+async function init() {
+  const data = await fetch("/api/catalog").then(r => r.json());
+  catalog = data.instruments;
+  presets = data.presets;
+  $("example").innerHTML = data.examples
+    .map(e => `<option value="${e.id}">${e.label}</option>`).join("");
+  $("preset").innerHTML = Object.keys(presets)
+    .map(k => `<option value="${k}">${k}（${presets[k].length} 位演奏者）</option>`)
+    .join("");
+  $("preset").addEventListener("change", syncPreset);
+  $("addPlayer").addEventListener("click", () => {
+    ensemble.push({player: "p" + (ensemble.length + 1), instruments: []});
+    renderPlayers();
+  });
+  $("loadExample").addEventListener("click", loadExample);
+  $("run").addEventListener("click", runOrchestrate);
+  syncPreset();
+  await loadExample();
+}
+
+function syncPreset() {
+  const key = $("preset").value;
+  ensemble = JSON.parse(JSON.stringify(presets[key] || []));
+  renderPlayers();
+}
+
+function renderPlayers() {
+  $("players").innerHTML = ensemble.map((p, pi) => `
+    <div class="player-card">
+      <div class="pid">演奏者 ${p.player}</div>
+      <div class="chips">
+        ${catalog.map(inst => `
+          <span class="chip ${p.instruments.includes(inst.id) ? "on" : ""}"
+            data-pi="${pi}" data-iid="${inst.id}"
+            title="${inst.family} · 音域 ${inst.low}~${inst.high} · 移调 ${inst.written_offset}">
+            ${inst.name}</span>`).join("")}
+      </div>
+    </div>`).join("");
+  document.querySelectorAll(".chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const pi = +chip.dataset.pi, iid = chip.dataset.iid;
+      const arr = ensemble[pi].instruments;
+      const at = arr.indexOf(iid);
+      if (at >= 0) arr.splice(at, 1); else arr.push(iid);
+      renderPlayers();
+    });
+  });
+}
+
+async function loadExample() {
+  const id = $("example").value;
+  currentScore = await fetch("/api/example?id=" + id).then(r => r.json());
+  $("runHint").textContent = `已载入《${currentScore.title}》，${currentScore.bpm} BPM，` +
+    currentScore.layers.map(l => `${l.name}${l.register_lock ? "（锁定音区）" : ""}`).join("、");
+}
+
+async function runOrchestrate() {
+  $("status").className = "muted";
+  $("status").textContent = "求解中：检查音域、呼吸、换把、换奏与复音硬约束…";
+  const body = {
+    example_id: $("example").value,
+    ensemble: ensemble.filter(p => p.instruments.length),
+  };
+  let res;
+  try {
+    res = await fetch("/api/orchestrate", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    }).then(r => r.json());
+  } catch (e) {
+    $("status").className = "status err";
+    $("status").textContent = "请求失败：" + e;
+    return;
+  }
+  renderResult(res);
+}
+
+function renderResult(res) {
+  $("scope").innerHTML = (res.simplification_scope || []).map(s => `<li>${s}</li>`).join("");
+  if (!res.feasible) {
+    $("status").className = "status err";
+    $("status").textContent = "无可行方案。" + res.explanation;
+    $("media").innerHTML = ""; $("timelines").innerHTML = "";
+    $("parts").innerHTML = ""; $("trace").innerHTML = ""; $("recovery").innerHTML = "";
+    $("failures").innerHTML = renderFailures(res);
+    return;
+  }
+  $("status").className = "status ok";
+  $("status").textContent =
+    `可执行方案（搜索节点 ${res.nodes}，软评分 ${res.score}）。拆分音符 ${Object.keys(res.split_notes).length} 个，` +
+    `角色让步 ${res.role_fallbacks.length} 处。所有硬性演奏条件均已满足。`;
+  $("failures").innerHTML = '<span class="muted">无失败：方案可行。</span>';
+  renderMedia(res);
+  renderTimelines(res);
+  renderParts(res);
+  renderTrace(res);
+  renderRecovery(res);
+}
+
+function renderMedia(res) {
+  const m = res.media || {};
+  const playerWavs = Object.entries(m.player_wavs || {})
+    .map(([pid, url]) => `<div class="small">分轨 ${pid}<audio controls src="${url}"></audio></div>`)
+    .join("");
+  $("media").innerHTML = `
+    <div class="grid2">
+      <div><strong>合奏混音（WAV 合成试听）</strong>
+        <audio controls src="${m.wav}"></audio></div>
+      <div><strong>下载</strong>
+        <p class="small"><a href="${m.midi}">ensemble.mid（实际音高）</a><br/>
+        <a href="${m.musicxml}">parts.musicxml（移调记谱分谱）</a></p></div>
+    </div>
+    <details><summary>各演奏者分轨</summary>${playerWavs}</details>`;
+}
+
+function renderTimelines(res) {
+  const total = res.duration_s;
+  const byPlayer = {};
+  res.trace.forEach(t => {
+    (byPlayer[t.player] ||= []).push(t);
+  });
+  $("timelines").innerHTML = Object.entries(byPlayer).map(([pid, evs]) => {
+    const blocks = evs.map(e => {
+      const left = (e.start_s / total * 100).toFixed(2);
+      const width = Math.max(1.2, (e.duration_s / total * 100)).toFixed(2);
+      const cls = e.action === "breath-rest" ? "block rest" : "block";
+      return `<div class="${cls}" style="left:${left}%;width:${width}%"
+        title="${e.note_id} ${e.instrument_name} ${e.action}">${e.instrument_name.slice(0,2)}</div>`;
+    }).join("");
+    return `<div class="small">${pid}<div class="timeline">${blocks}</div></div>`;
+  }).join("");
+}
+
+function renderParts(res) {
+  $("parts").innerHTML = `<table><thead><tr>
+    <th>乐器 / 演奏者</th><th>角色</th><th>音符</th>
+    <th>实际音高</th><th>记谱音高</th><th>起点(s)</th><th>时长(s)</th><th>事件</th>
+    </tr></thead><tbody>
+    ${res.per_instrument.map(p => p.events.map((e, i) => `
+      <tr>
+        ${i === 0 ? `<td rowspan="${p.events.length}"><strong>${p.name}</strong><br/>
+          <span class="small">${p.player} · ${p.family}<br/>移调偏移 ${p.written_offset}</span></td>` : ""}
+        <td>${roleTag(e.role)}</td>
+        <td>${e.note_id}</td>
+        <td>${e.sounding_midi ?? "—"}</td>
+        <td>${e.written_midi ?? "—"}</td>
+        <td>${e.start_s}</td><td>${e.duration_s}</td>
+        <td>${actionTag(e.action)}<div class="small">${e.reason || ""}</div></td>
+      </tr>`).join("")).join("")}
+    </tbody></table>`;
+}
+
+function renderTrace(res) {
+  $("trace").innerHTML = `<table><thead><tr>
+    <th>音符</th><th>层</th><th>角色</th><th>演奏者</th><th>乐器</th>
+    <th>起点</th><th>时长</th><th>动作</th><th>说明</th></tr></thead><tbody>
+    ${res.trace.map(t => `<tr>
+      <td>${t.note_id}</td><td>${t.layer}</td><td>${roleTag(t.role)}</td>
+      <td>${t.player}</td><td>${t.instrument_name}</td>
+      <td>${t.start_s}</td><td>${t.duration_s}</td>
+      <td>${actionTag(t.action)}${t.split ? " " + t.split : ""}</td>
+      <td class="small">${t.reason || ""}</td></tr>`).join("")}
+    </tbody></table>`;
+}
+
+function renderRecovery(res) {
+  $("recovery").innerHTML = res.player_summary.map(s => `
+    <div class="player-card">
+      <div class="pid">${s.player} · ${s.instruments.join("/")}
+        <span class="tag ${s.all_recoveries_ok ? "direct" : "breath-rest"}">
+          ${s.all_recoveries_ok ? "恢复检验通过" : "存在违规"}</span></div>
+      <div class="small">发声片段 ${s.tones} · 换气休止 ${s.breath_rests} ·
+        换奏 ${s.instrument_changes} · 总发声 ${s.total_playing_s}s</div>
+      <table><thead><tr><th>音符</th><th>乐器</th><th>检验</th><th>细节</th></tr></thead>
+      <tbody>${s.checks.map(c => `<tr><td>${c.note_id}</td><td>${c.instrument}</td>
+        <td>${c.ok ? "✓" : "✗"}</td><td class="small">${c.detail || "—"}</td></tr>`).join("")}
+      </tbody></table>
+    </div>`).join("");
+}
+
+function renderFailures(res) {
+  if (!res.failures || !res.failures.length)
+    return `<pre class="fail">${res.explanation || "无详细记录"}</pre>`;
+  return `<pre class="fail">${res.failures.map(f =>
+    `${f.note_id}（${f.role} MIDI ${f.midi} @${f.start_s}s）:\n` +
+    f.reasons.map(r => "  * " + r).join("\n")).join("\n\n")}</pre>`;
+}
+
+init();
+</script>
+</body>
+</html>

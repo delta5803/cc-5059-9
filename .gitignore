@@ -23,3 +23,9 @@ __pycache__/
 *.log
 .env
 .env.*
+
+# 配器导出与试听会话（可再生制品）
+output/
+
+# 单元测试生成的分谱与试听文件
+/tests/tmp_out/
