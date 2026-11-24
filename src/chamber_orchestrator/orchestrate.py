@@ -11,6 +11,7 @@ from .midi_export import write_midi
 from .musicxml_export import write_musicxml
 from .score import ROLE_LABEL
 from .solver import Solver
+from .verify import verify_assignments
 
 SIMPLIFICATION_SCOPE = [
     "音域为静态发声音域，未建模动态音准、极端力度下的边缘音可靠性。",
@@ -44,6 +45,7 @@ def orchestrate(score, ensemble: list[tuple[str, list[str]]],
         "player_summary": result.player_summary,
         "failures": [asdict(f) for f in result.failures],
         "simplification_scope": SIMPLIFICATION_SCOPE,
+        "verification": None,
         "ensemble": [
             {"player": pid,
              "instruments": [{"id": iid, "name": CATALOG[iid].name,
@@ -71,6 +73,10 @@ def orchestrate(score, ensemble: list[tuple[str, list[str]]],
             "musicxml": xml_path, "player_wavs": player_wavs,
         }
         payload["per_instrument"] = _per_instrument(result)
+    if result.feasible:
+        verification = verify_assignments(score, result.assignments,
+                                          ensemble, export_dir=out_dir)
+        payload["verification"] = verification.to_dict()
     return payload
 
 

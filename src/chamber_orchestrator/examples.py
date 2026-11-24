@@ -85,10 +85,41 @@ def example_doubling_conflict() -> Score:
     return Score("谱例五：兼任换奏争抢", bpm, [melody, inner, bass])
 
 
+def _capability_two_flutes_long() -> Score:
+    """两条 16s 同时持续音（@60bpm）；仅两把长笛时合奏无解。"""
+    bpm = 60
+    return Score("边界：两条同时长音（两把长笛）", bpm, [
+        make_line("mel", ROLE_MELODY, "长音旋律", bpm, [(0, 16, "G4")]),
+        make_line("inner", ROLE_INNER, "长音内声", bpm, [(0, 16, "A4")]),
+    ])
+
+
+def _capability_four_flutes_long() -> Score:
+    """同上材料；四把长笛可在 t=10s 无缝交接，构成可行重配回放。"""
+    return _capability_two_flutes_long()
+
+
 EXAMPLES = {
     "long_tone": (example_long_tone, "长音与呼吸移交"),
     "fast_alternation": (example_fast_alternation, "快速交替与吐音极限"),
     "range_conflict": (example_range_conflict, "音域冲突（无解演示）"),
     "locked_register": (example_locked_register, "用户锁定音区"),
     "doubling_conflict": (example_doubling_conflict, "兼任换奏争抢"),
+    # 演奏能力边界谱例：单人可演奏而合奏无解，及其可行重配回放
+    "capability_two_flutes_long": (
+        _capability_two_flutes_long,
+        "边界：两条同时长音 vs 两把长笛（合奏无解、单声部可演奏）"),
+    "capability_four_flutes_long": (
+        _capability_four_flutes_long,
+        "边界：两条同时长音 vs 四把长笛（t=10s 交接可解）"),
+}
+
+
+# 边界谱例默认使用的编制（供界面“载入谱例”时自动选中）
+EXAMPLE_ENSEMBLE = {
+    "capability_two_flutes_long": [
+        ("p1", ["flute"]), ("p2", ["flute"])],
+    "capability_four_flutes_long": [
+        ("p1", ["flute"]), ("p2", ["flute"]),
+        ("p3", ["flute"]), ("p4", ["flute"])],
 }

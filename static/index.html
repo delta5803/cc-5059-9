@@ -75,6 +75,24 @@
     border-radius: 8px; padding: 10px; font-size: 12.5px; white-space: pre-wrap;
     max-height: 320px; overflow: auto; }
   .add-btn { width: auto; padding: 4px 12px; font-size: 12px; }
+  .verif { border-radius: 10px; padding: 12px; margin: 10px 0;
+    border: 1px solid var(--line); }
+  .verif.pass { background: rgba(55,194,123,.10); border-color: var(--ok); }
+  .verif.fail { background: rgba(239,106,106,.10); border-color: var(--err); }
+  .verif h3 { margin: 0 0 6px; font-size: 13px; }
+  .verif .metrics { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px;
+    color: var(--muted); margin: 6px 0; }
+  .verif .metrics b { color: var(--text); }
+  .vlist { margin: 6px 0 0; padding-left: 16px; font-size: 12px;
+    max-height: 220px; overflow: auto; }
+  .vlist li { margin: 3px 0; }
+  .vcode { display: inline-block; padding: 0 6px; border-radius: 6px;
+    background: rgba(239,106,106,.18); color: #ffb3b3; font-size: 11px;
+    margin-right: 6px; }
+  .vcode.coverage { background: rgba(240,168,72,.18); color: #ffd39a; }
+  .vcode.media { background: rgba(79,156,249,.18); color: #9cc7ff; }
+  .conflict { color: var(--err); font-weight: 600; }
+  .tag.anomaly { color: var(--err); border-color: #7a3737; }
 </style>
 </head>
 <body>
@@ -111,6 +129,7 @@
     <div class="panel">
       <h2>2 · 配器结果与混音试听</h2>
       <div id="status" class="muted">尚未生成。选择编制后点击“生成配器并试听”。</div>
+      <div id="verification"></div>
       <div id="media"></div>
       <div id="timelines"></div>
     </div>
@@ -140,7 +159,8 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let catalog = [], presets = {}, ensemble = [], currentScore = null;
+let catalog = [], presets = {}, ensemble = [], currentScore = null,
+    exampleEnsemble = {}, conflictIds = new Set();
 
 function roleTag(role) {
   const map = {melody: "主旋律", inner: "内声部", bass: "低音"};
@@ -152,12 +172,14 @@ async function init() {
   const data = await fetch("/api/catalog").then(r => r.json());
   catalog = data.instruments;
   presets = data.presets;
+  exampleEnsemble = data.example_ensemble_map || {};
   $("example").innerHTML = data.examples
     .map(e => `<option value="${e.id}">${e.label}</option>`).join("");
   $("preset").innerHTML = Object.keys(presets)
     .map(k => `<option value="${k}">${k}（${presets[k].length} 位演奏者）</option>`)
     .join("");
   $("preset").addEventListener("change", syncPreset);
+  $("example").addEventListener("change", loadExample);
   $("addPlayer").addEventListener("click", () => {
     ensemble.push({player: "p" + (ensemble.length + 1), instruments: []});
     renderPlayers();
@@ -200,6 +222,11 @@ function renderPlayers() {
 async function loadExample() {
   const id = $("example").value;
   currentScore = await fetch("/api/example?id=" + id).then(r => r.json());
+  // 边界谱例自带建议编制：录音室试听时自动选中（仍可手动改）
+  if (exampleEnsemble[id]) {
+    ensemble = JSON.parse(JSON.stringify(exampleEnsemble[id]));
+    renderPlayers();
+  }
   $("runHint").textContent = `已载入《${currentScore.title}》，${currentScore.bpm} BPM，` +
     currentScore.layers.map(l => `${l.name}${l.register_lock ? "（锁定音区）" : ""}`).join("、");
 }
@@ -230,7 +257,8 @@ function renderResult(res) {
   if (!res.feasible) {
     $("status").className = "status err";
     $("status").textContent = "无可行方案。" + res.explanation;
-    $("media").innerHTML = ""; $("timelines").innerHTML = "";
+    $("verification").innerHTML = ""; $("media").innerHTML = "";
+    $("timelines").innerHTML = "";
     $("parts").innerHTML = ""; $("trace").innerHTML = ""; $("recovery").innerHTML = "";
     $("failures").innerHTML = renderFailures(res);
     return;
@@ -240,11 +268,57 @@ function renderResult(res) {
     `可执行方案（搜索节点 ${res.nodes}，软评分 ${res.score}）。拆分音符 ${Object.keys(res.split_notes).length} 个，` +
     `角色让步 ${res.role_fallbacks.length} 处。所有硬性演奏条件均已满足。`;
   $("failures").innerHTML = '<span class="muted">无失败：方案可行。</span>';
+  renderVerification(res);
   renderMedia(res);
   renderTimelines(res);
   renderParts(res);
   renderTrace(res);
   renderRecovery(res);
+}
+
+// 演奏能力验收（独立参照）：展示执行证据，异常项标红
+function renderVerification(res) {
+  const v = res.verification;
+  if (!v) { $("verification").innerHTML = ""; return; }
+  const ok = v.passes;
+  conflictIds = new Set((v.conflict_voices || []).map(c => c.note_id));
+  const listItem = (x, kind) => {
+    const cls = kind === "capability" ? "" : (kind === "coverage" ? "coverage" : "media");
+    const loc = [x.player, x.instrument].filter(Boolean).join(" / ");
+    const t = (x.time_s !== null && x.time_s !== undefined) ? ` @${x.time_s}s` : "";
+    return `<li><span class="vcode ${cls}">${x.code}</span>` +
+      `${loc ? `<b>${loc}</b> · ` : ""}${x.note_id ? `${x.note_id} ` : ""}` +
+      `${x.detail}${t}</li>`;
+  };
+  const cap = (v.capability_violations || []).map(x => listItem(x, "capability"));
+  const cov = (v.coverage_violations || []).map(x => listItem(x, "coverage"));
+  const med = (v.media_violations || []).map(x => listItem(x, "media"));
+  const conflicts = (v.conflict_voices || []).map(c =>
+    `<li><span class="conflict">冲突声部 ${c.note_id}</span>` +
+    `（${c.role}）${c.codes.join("、")}` +
+    `${c.times && c.times.length ? " @ " + c.times.join(",") + "s" : ""}` +
+    `${c.conflicts_with && c.conflicts_with.length ? " ↔ " + c.conflicts_with.join(", ") : ""}</li>`
+  ).join("");
+  const moments = (v.handoff_moments || []).map(m =>
+    `<li>${m.note_id} 交接 @${m.time_s}s：${m.from_player} → ${m.to_player}</li>`
+  ).join("");
+  $("verification").innerHTML = `
+    <div class="verif ${ok ? "pass" : "fail"}">
+      <h3>${ok ? "✓ 演奏能力验收通过" : "✗ 演奏能力验收未通过"}（独立参照）</h3>
+      <div class="metrics">
+        <span>声部覆盖 <b>${v.voices_covered}/${v.voices_expected}</b></span>
+        <span>能力违例 <b>${cap.length}</b></span>
+        <span>覆盖违例 <b>${cov.length}</b></span>
+        <span>试听异常 <b>${med.length}</b></span>
+      </div>
+      <div class="small">${v.summary || ""}</div>
+      ${conflicts ? `<details open><summary>冲突声部</summary><ul class="vlist">${conflicts}</ul></details>` : ""}
+      ${(cap.length + cov.length + med.length) ?
+        `<details open><summary>违例明细（含交接时刻）</summary>
+          <ul class="vlist">${cap.join("")}${cov.join("")}${med.join("")}</ul></details>` : ""}
+      ${moments ? `<details><summary>声部交接时刻</summary><ul class="vlist">${moments}</ul></details>` : ""}
+    </div>`;
+  // 声部配置表里标注异常声部
 }
 
 function renderMedia(res) {
@@ -291,7 +365,8 @@ function renderParts(res) {
         ${i === 0 ? `<td rowspan="${p.events.length}"><strong>${p.name}</strong><br/>
           <span class="small">${p.player} · ${p.family}<br/>移调偏移 ${p.written_offset}</span></td>` : ""}
         <td>${roleTag(e.role)}</td>
-        <td>${e.note_id}</td>
+        <td>${e.note_id}${conflictIds.has(e.note_id) ?
+          ' <span class="tag anomaly">异常</span>' : ""}</td>
         <td>${e.sounding_midi ?? "—"}</td>
         <td>${e.written_midi ?? "—"}</td>
         <td>${e.start_s}</td><td>${e.duration_s}</td>

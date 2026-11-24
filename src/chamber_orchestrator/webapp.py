@@ -13,7 +13,7 @@ import sys
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .examples import EXAMPLES
+from .examples import EXAMPLE_ENSEMBLE, EXAMPLES
 from .instruments import CATALOG, ENSEMBLE_PRESETS
 from .orchestrate import orchestrate
 from .score import (ROLE_BASS, ROLE_INNER, ROLE_MELODY, Score, make_line)
@@ -99,6 +99,9 @@ class Handler(BaseHTTPRequestHandler):
                             for k, v in ENSEMBLE_PRESETS.items()},
                 "examples": [{"id": k, "label": label}
                              for k, (_, label) in EXAMPLES.items()],
+                "example_ensemble_map": {
+                    k: [{"player": p, "instruments": ids}
+                        for p, ids in v] for k, v in EXAMPLE_ENSEMBLE.items()},
             })
         if path == "/api/example":
             ex_id = self.query_get("id", "long_tone")

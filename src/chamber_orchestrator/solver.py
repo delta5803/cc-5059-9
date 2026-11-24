@@ -333,8 +333,8 @@ class Solver:
                 # 静态硬条件：音域、锁定音区
                 if self._static_check(inst, frag, layer.register_lock):
                     continue
-                plan_steps, gain = self._plans_for(p, inst, frag, role)
-                if plan_steps is not None:
+                for plan_steps, gain in self._plans_for(p, inst, frag, role,
+                                                        players):
                     # 负载均衡：已承担发声越多，增量分越低
                     gain -= 0.015 * len(p.assignments)
                     out.append((plan_steps, gain))
@@ -353,33 +353,36 @@ class Solver:
         return None
 
     def _plans_for(self, p: PlayerRuntime, inst: Instrument,
-                   frag: Fragment, role: str):
-        """返回 (plan_steps, 得分增量)，plan_steps 为
-        [(player_id, instrument_id, fragment), ...]；不可行返回 (None, 0)。"""
+                   frag: Fragment, role: str,
+                   players: list[PlayerRuntime]):
+        """返回 [(plan_steps, 得分增量), ...]；不可行返回 []。
+
+        plan_steps 为 [(player_id, instrument_id, fragment), ...]。
+        长音/超预算音可能给出多套移交方案（不同接棒者），供回溯择优。"""
         # 1) 原样放置
         if self._can_place(p, inst, frag):
             gain = self._tone_score(p, inst, frag, role, split=False)
-            return [(p.player_id, inst.id, frag)], gain
+            return [([(p.player_id, inst.id, frag)], gain)]
 
         if not inst.is_wind:
-            return None, 0.0
+            return []
 
         # 2) 管乐：超口气/超长音 -> 移交拆分优先，其次同管换气拆分
-        return self._wind_split_plans(p, inst, frag, role)
+        return self._wind_split_plans(p, inst, frag, role, players)
 
     def _wind_split_plans(self, p: PlayerRuntime, inst: Instrument,
-                          frag: Fragment, role: str):
+                          frag: Fragment, role: str,
+                          players: list[PlayerRuntime]):
         """长音/超预算音的两种拆分：移交（优先）或同一人换气再奏。"""
         remaining_budget = self._phrase_remaining(p, inst, frag.start_s)
         if remaining_budget is None:
-            return None, 0.0
+            return []
         # 前段不得超过单音最大持续，也不超过当前口气剩余
         first_dur = min(remaining_budget, inst.max_sustain_s)
-
+        plans = []
         # 情形 A：无缝移交给另一位管乐演奏者（同一旋律线不中断）
-        handoff = self._handoff_plan(p, inst, frag, role, first_dur)
-        if handoff is not None:
-            return handoff
+        plans.extend(self._handoff_plans(p, inst, frag, role, first_dur,
+                                         players))
 
         # 情形 B：同一人换气后再奏后段（音乐时间内插入真实换气休止）
         need = frag.duration_s
@@ -398,29 +401,35 @@ class Solver:
                          reason="换气后再奏后段")
             probe = p.clone()
             if self._can_place(probe, inst, f1):
-                self._place(probe, inst, f1)
+                self._place(probe, inst.id, f1)
                 self._place_rest(probe, inst, rest)
                 if self._can_place(probe, inst, f2):
                     gain = (self._tone_score(p, inst, f1, role, split=True)
                             + self._tone_score(p, inst, f2, role, split=True)
                             - self.handoff_penalty)
-                    return ([(p.player_id, inst.id, f1),
-                             (p.player_id, inst.id, rest),
-                             (p.player_id, inst.id, f2)], gain)
-        return None, 0.0
+                    plans.append(([(p.player_id, inst.id, f1),
+                                   (p.player_id, inst.id, rest),
+                                   (p.player_id, inst.id, f2)], gain))
+        return plans
 
-    def _handoff_plan(self, p: PlayerRuntime, inst: Instrument,
-                      frag: Fragment, role: str, first_dur: float):
-        if first_dur <= 0 or frag.duration_s <= first_dur:
-            return None
+    def _handoff_plans(self, p: PlayerRuntime, inst: Instrument,
+                       frag: Fragment, role: str, first_dur: float,
+                       players: list[PlayerRuntime]):
+        """为长音前段生成若干无缝移交方案（接棒者按音色分从优到劣）。
+
+        关键：接棒者从**当前搜索状态** `players` 挑选并现场校验，
+        避免选中已被占用或仍在恢复的演奏者；返回多套方案使回溯能绕过
+        刚奏满最大持续的演奏者。"""
+        if first_dur <= 0 or frag.duration_s <= first_dur + 1e-9:
+            return []
         f1 = replace(frag, duration_s=first_dur, split_index=0, split_total=2,
                      reason=f"移交前段 {first_dur:.2f}s")
         f2 = replace(frag, start_s=frag.start_s + first_dur,
                      duration_s=frag.duration_s - first_dur,
                      split_index=1, split_total=2,
                      handoff_from=p.player_id, reason="无缝移交后段")
-        best_other = None
-        for other in self.players:
+        targets = []
+        for other in players:
             if other.player_id == p.player_id:
                 continue
             for oid in other.instruments:
@@ -429,21 +438,18 @@ class Solver:
                     continue
                 if not oinst.is_wind:
                     continue
-                probe = other.clone()
-                if not self._can_place(probe, oinst, f2):
+                if not self._can_place(other, oinst, f2):
                     continue
                 sc = self._tone_score(other, oinst, f2, role, split=True)
-                if best_other is None or sc > best_other[0]:
-                    best_other = (sc, other.player_id, oid, oinst)
-        if best_other is None:
-            return None
-        _, other_pid, oid, oinst = best_other
-        other = next(q for q in self.players if q.player_id == other_pid)
-        gain = (self._tone_score(p, inst, f1, role, split=True)
-                + self._tone_score(other, oinst, f2, role, split=True)
-                - self.handoff_penalty)
-        return ([(p.player_id, inst.id, f1),
-                 (other_pid, oid, f2)], gain)
+                targets.append((sc, other.player_id, oid, other))
+        targets.sort(key=lambda t: -t[0])
+        plans = []
+        for sc, other_pid, oid, other in targets:
+            gain = (self._tone_score(p, inst, f1, role, split=True)
+                    + sc - self.handoff_penalty)
+            plans.append(([(p.player_id, inst.id, f1),
+                           (other_pid, oid, f2)], gain))
+        return plans
 
     # ------------------------------------------------------------------ #
     # 可行性检查与状态放置
